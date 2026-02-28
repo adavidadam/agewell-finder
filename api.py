@@ -27,6 +27,7 @@ class TownRanking(BaseModel):
     gyms: int
     community_centres: int
     bus_stops: int
+    gp_surgeries: int
     care_score: float
     green_score: float
     active_score: float
