@@ -19,6 +19,7 @@ app.add_middleware(
 
 class TownRanking(BaseModel):
     town: str
+    county: str
     lat: float
     lon: float
     pharmacies: int
