@@ -4,7 +4,7 @@ Simple API to serve AgeWell rankings.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 
 app = FastAPI(title="AgeWell Finder API")
@@ -36,6 +36,21 @@ class TownRanking(BaseModel):
     social_score: float
     mobility_score: float
     overall_score: float
+
+
+class TownRecommendation(BaseModel):
+    rank: int
+    town: str
+    county: str
+    overall_score: float
+    avg_house_price: int
+    reasons: List[str]
+
+
+class QuickShortlistResponse(BaseModel):
+    count: int
+    filters: Dict[str, Any]
+    recommendations: List[TownRecommendation]
 
 def get_db():
     conn = sqlite3.connect('data/agewell.db')
@@ -115,6 +130,99 @@ def get_towns(
         df = df.head(limit)
     
     return df.to_dict('records')
+
+
+@app.get('/quick-shortlist', response_model=QuickShortlistResponse)
+def quick_shortlist(
+    max_price: Optional[int] = None,
+    min_care: float = 0,
+    min_green: float = 0,
+    min_active: float = 0,
+    min_social: float = 0,
+    min_mobility: float = 0,
+    care_weight: float = 1.0,
+    green_weight: float = 1.0,
+    active_weight: float = 1.0,
+    social_weight: float = 1.0,
+    mobility_weight: float = 1.0,
+    limit: int = 5
+):
+    """Return a practical top-N shortlist with plain-English reasons."""
+    conn = get_db()
+    towns = conn.execute("SELECT * FROM amenities").fetchall()
+    conn.close()
+
+    df = calculate_scores(towns)
+
+    total_weight = care_weight + green_weight + active_weight + social_weight + mobility_weight
+    df['overall_score'] = (
+        df['care_score'] * care_weight +
+        df['green_score'] * green_weight +
+        df['active_score'] * active_weight +
+        df['social_score'] * social_weight +
+        df['mobility_score'] * mobility_weight
+    ) / total_weight
+    df['overall_score'] = df['overall_score'].round(1)
+
+    if max_price and max_price > 0:
+        df = df[(df['avg_house_price'] > 0) & (df['avg_house_price'] <= max_price)]
+
+    df = df[
+        (df['care_score'] >= min_care) &
+        (df['green_score'] >= min_green) &
+        (df['active_score'] >= min_active) &
+        (df['social_score'] >= min_social) &
+        (df['mobility_score'] >= min_mobility)
+    ]
+
+    df = df.sort_values('overall_score', ascending=False).head(max(1, min(limit, 20)))
+
+    recs = []
+    for i, row in enumerate(df.to_dict('records'), start=1):
+        strongest = sorted([
+            ('Care', row['care_score']),
+            ('Green', row['green_score']),
+            ('Active', row['active_score']),
+            ('Community', row['social_score']),
+            ('Transport', row['mobility_score']),
+        ], key=lambda x: x[1], reverse=True)[:2]
+
+        reasons = [
+            f"{strongest[0][0]} score {strongest[0][1]:.0f}",
+            f"{strongest[1][0]} score {strongest[1][1]:.0f}",
+            f"Area median price £{int(row['avg_house_price']):,}" if int(row['avg_house_price']) > 0 else 'Price currently unavailable'
+        ]
+
+        recs.append({
+            'rank': i,
+            'town': row['town'],
+            'county': row['county'],
+            'overall_score': row['overall_score'],
+            'avg_house_price': int(row['avg_house_price'] or 0),
+            'reasons': reasons
+        })
+
+    return {
+        'count': len(recs),
+        'filters': {
+            'max_price': max_price,
+            'min_care': min_care,
+            'min_green': min_green,
+            'min_active': min_active,
+            'min_social': min_social,
+            'min_mobility': min_mobility,
+            'weights': {
+                'care': care_weight,
+                'green': green_weight,
+                'active': active_weight,
+                'social': social_weight,
+                'mobility': mobility_weight
+            },
+            'limit': limit
+        },
+        'recommendations': recs
+    }
+
 
 @app.get("/town/{town_name}")
 def get_town(town_name: str):
