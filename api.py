@@ -29,6 +29,7 @@ class TownRanking(BaseModel):
     community_centres: int
     bus_stops: int
     gp_surgeries: int
+    avg_house_price: int
     care_score: float
     green_score: float
     active_score: float
@@ -72,6 +73,7 @@ def calculate_scores(towns):
     score_cols = ['care_score', 'green_score', 'active_score', 'social_score', 'mobility_score', 'overall_score']
     df[score_cols] = df[score_cols].round(1)
     
+    df['avg_house_price'] = df['avg_house_price'].fillna(0).astype(int)
     return df
 
 @app.get("/")
